@@ -125,6 +125,7 @@ func configFromEnvironmentVariables() *config {
 	if b, err := strconv.ParseBool(os.Getenv("CONTENT_ENCODING")); err == nil {
 		contentEncoging = b
 	}
+
 	corsMaxAge := int64(600)
 	if i, err := strconv.ParseInt(os.Getenv("CORS_MAX_AGE"), 10, 64); err == nil {
 		corsMaxAge = i
@@ -159,6 +160,7 @@ func configFromEnvironmentVariables() *config {
 		healthCheckPath:  os.Getenv("HEALTHCHECK_PATH"),
 		allPagesInDir:    allPagesInDir,
 	}
+
 	// Proxy
 	log.Printf("[config] Proxy to %v", conf.s3Bucket)
 	log.Printf("[config] AWS Region: %v", conf.awsRegion)
@@ -215,7 +217,9 @@ func wrapper(f func(w http.ResponseWriter, r *http.Request)) http.Handler {
 			addr = ip
 		}
 		ioWriter := w.(io.Writer)
-		if encodings, found := header(r, "Accept-Encoding"); found && c.contentEncoding {
+		encodings, found := header(r, "Accept-Encoding")
+
+		if found && c.contentEncoding {
 			for _, encoding := range splitCsvLine(encodings) {
 				if encoding == "gzip" {
 					w.Header().Set("Content-Encoding", "gzip")
@@ -327,6 +331,7 @@ func awss3(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, message, code)
 		return
 	}
+
 	setHeadersFromAwsResponse(w, obj)
 
 	io.Copy(w, obj.Body) // nolint
@@ -352,31 +357,20 @@ func setHeadersFromAwsResponse(w http.ResponseWriter, obj *s3.GetObjectOutput) {
 	setStrHeader(w, "Content-Encoding", obj.ContentEncoding)
 	setStrHeader(w, "Content-Language", obj.ContentLanguage)
 	setIntHeader(w, "Content-Length", obj.ContentLength)
-	setStrHeader(w, "Content-Range", obj.ContentRange)
 	setStrHeader(w, "Content-Type", obj.ContentType)
 	setStrHeader(w, "ETag", obj.ETag)
 	setTimeHeader(w, "Last-Modified", obj.LastModified)
 
-	httpStatus := determineHTTPStatus(obj)
-
-	w.WriteHeader(httpStatus)
-}
-
-func determineHTTPStatus(obj *s3.GetObjectOutput) int {
-
+	contentRangeIsGiven := obj.ContentRange != nil && len(*obj.ContentRange) > 0
+	
 	httpStatus := http.StatusOK
 
-	contentRangeIsGiven := obj.ContentRange != nil && len(*obj.ContentRange) > 0
-
-	if contentRangeIsGiven {
+	if contentRangeIsGiven{
 		httpStatus = http.StatusPartialContent
-
-		if totalFileSizeEqualToContentRange(obj) {
-			httpStatus = http.StatusOK
-		}
-
+		setStrHeader(w, "Content-Range", obj.ContentRange)
 	}
-	return httpStatus
+
+	w.WriteHeader(httpStatus)
 }
 
 func totalFileSizeEqualToContentRange(obj *s3.GetObjectOutput) bool {
